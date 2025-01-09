@@ -10,6 +10,7 @@ public class ClientHandler implements Runnable {
     private final BufferedReader reader;
     private final PrintWriter writer;
     private String username;
+    private boolean isAuthenticated = false;
 
     public ClientHandler(Socket socket) throws IOException {
         this.socket = socket;
@@ -24,11 +25,18 @@ public class ClientHandler implements Runnable {
     @Override
     public void run() {
         try {
-            processAuthentication();
+            // Спроба аутентифікації
+            if (!processAuthentication()) {
+                return; // Завершуємо роботу, якщо аутентифікація не вдалася
+            }
+
+            // Обробка повідомлень чату тільки після успішної аутентифікації
             String message;
             while ((message = reader.readLine()) != null) {
-                saveMessage(username, message);
-                Server.broadcastMessage(username + ": " + message);
+                if (isAuthenticated) {
+                    saveMessage(username, message);
+                    Server.broadcastMessage(username + ": " + message);
+                }
             }
         } catch (IOException e) {
             System.err.println("Error in client handler: " + e.getMessage());
@@ -37,20 +45,35 @@ public class ClientHandler implements Runnable {
         }
     }
 
-    private void processAuthentication() throws IOException {
-        writer.println("Enter username:");
+    private boolean processAuthentication() throws IOException {
+        String action = reader.readLine(); // Читаємо тип дії (LOGIN або REGISTER)
         String inputUsername = reader.readLine();
-        writer.println("Enter password:");
         String password = reader.readLine();
 
-        if (validateUser(inputUsername, password)) {
-            this.username = inputUsername;
-            writer.println("Authentication successful");
-            Server.addClient(username, this);
-        } else {
-            writer.println("Authentication failed");
-            throw new IOException("Authentication failed");
+        if ("REGISTER".equals(action)) {
+            if (registerUser(inputUsername, password)) {
+                this.username = inputUsername;
+                this.isAuthenticated = true;
+                writer.println("Registration successful");
+                Server.addClient(username, this);
+                return true;
+            } else {
+                writer.println("Registration failed - Username already exists");
+                return false;
+            }
+        } else if ("LOGIN".equals(action)) {
+            if (validateUser(inputUsername, password)) {
+                this.username = inputUsername;
+                this.isAuthenticated = true;
+                writer.println("Authentication successful");
+                Server.addClient(username, this);
+                return true;
+            } else {
+                writer.println("Authentication failed");
+                return false;
+            }
         }
+        return false;
     }
 
     private boolean validateUser(String username, String password) {
@@ -69,6 +92,35 @@ public class ClientHandler implements Runnable {
             System.err.println("Database error during validation: " + e.getMessage());
         }
         return false;
+    }
+
+    private boolean registerUser(String username, String password) {
+        BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
+        String hashedPassword = encoder.encode(password);
+
+        try (Connection conn = DriverManager.getConnection(Server.DB_URL)) {
+            // Перевіряємо, чи існує користувач
+            String checkQuery = "SELECT username FROM users WHERE username = ?";
+            try (PreparedStatement checkStmt = conn.prepareStatement(checkQuery)) {
+                checkStmt.setString(1, username);
+                ResultSet rs = checkStmt.executeQuery();
+                if (rs.next()) {
+                    return false; // Користувач вже існує
+                }
+            }
+
+            // Створюємо нового користувача
+            String insertQuery = "INSERT INTO users (username, password_hash) VALUES (?, ?)";
+            try (PreparedStatement pstmt = conn.prepareStatement(insertQuery)) {
+                pstmt.setString(1, username);
+                pstmt.setString(2, hashedPassword);
+                pstmt.executeUpdate();
+                return true;
+            }
+        } catch (SQLException e) {
+            System.err.println("Database error during registration: " + e.getMessage());
+            return false;
+        }
     }
 
     private void saveMessage(String sender, String content) {

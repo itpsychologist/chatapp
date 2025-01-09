@@ -56,6 +56,12 @@
             <artifactId>bootstrapfx-core</artifactId>
             <version>0.4.0</version>
         </dependency>
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-graphics</artifactId>
+            <version>17.0.6</version>
+            <classifier>win</classifier>
+        </dependency>
 
         <!-- JUnit -->
         <dependency>
@@ -106,6 +112,46 @@
                     <source>23</source>
                     <target>23</target>
                 </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.5.1</version>
+                <executions>
+                    <!-- Створення JAR файлу для сервера -->
+                    <execution>
+                        <id>server-jar</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>com.chatapp.server.Server</mainClass>
+                                </transformer>
+                            </transformers>
+                            <finalName>chat-server</finalName>
+                        </configuration>
+                    </execution>
+                    <!-- Створення JAR файлу для клієнта -->
+                    <execution>
+                        <id>client-jar</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>com.chatapp.client.Client</mainClass>
+                                </transformer>
+                            </transformers>
+                            <finalName>chat-client</finalName>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
 
             <!-- JavaFX Maven Plugin -->

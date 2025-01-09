@@ -1,0 +1,7 @@
+FROM eclipse-temurin:23-jre
+
+WORKDIR /app
+COPY target/chat-server.jar .
+EXPOSE 8080
+
+CMD ["java", "-jar", "chat-server.jar"]

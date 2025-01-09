@@ -5,6 +5,7 @@ import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
+import javafx.scene.layout.*;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
@@ -26,51 +27,132 @@ public class Client extends Application {
     private PrintWriter writer;
     private TextArea chatArea;
     private TextField messageField;
+    private Stage primaryStage;
+    private boolean isAuthenticated = false;
 
     @Override
     public void start(Stage primaryStage) {
+        this.primaryStage = primaryStage;
         primaryStage.setTitle("Chat Client");
 
-        VBox root = new VBox(10);
-        root.setPadding(new Insets(10));
+        initializeUI(primaryStage);
 
+        try {
+            connectToServer();
+            authenticateUser();
+        } catch (IOException e) {
+            e.printStackTrace();
+            showError("Could not connect to server");
+            Platform.exit();
+        }
+    }
+
+    private void initializeUI(Stage primaryStage) {
+        // Створюємо головний контейнер з відступами тільки з боків та зверху
+        VBox root = new VBox(5); // Зменшуємо відступ між елементами
+        root.setPadding(new Insets(10, 10, 5, 10));
+
+        // Налаштовуємо область чату
         chatArea = new TextArea();
         chatArea.setEditable(false);
         chatArea.setWrapText(true);
+        chatArea.setPrefRowCount(20); // Встановлюємо бажану кількість рядків
 
+        // Створюємо горизонтальний контейнер для поля введення та кнопки
+        HBox inputBox = new HBox(5); // Невеликий відступ між елементами
+
+        // Налаштовуємо поле введення повідомлення
         messageField = new TextField();
+        HBox.setHgrow(messageField, Priority.ALWAYS); // Поле введення займає весь доступний простір
+
+        // Налаштовуємо кнопку відправки
         Button sendButton = new Button("Send");
+        sendButton.setPrefWidth(60); // Фіксована ширина кнопки
+        sendButton.setMinWidth(60);
+        sendButton.setMaxWidth(60);
 
-        root.getChildren().addAll(chatArea, messageField, sendButton);
+        // Додаємо елементи до горизонтального контейнера
+        inputBox.getChildren().addAll(messageField, sendButton);
 
-        try {
-            socket = new Socket(SERVER_ADDRESS, SERVER_PORT);
-            reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-            writer = new PrintWriter(socket.getOutputStream(), true);
+        // Додаємо всі елементи до головного контейнера
+        root.getChildren().addAll(chatArea, inputBox);
+        VBox.setVgrow(chatArea, Priority.ALWAYS); // Область чату розтягується на весь доступний простір
 
-            showLoginDialog();
+        // Налаштовуємо обробники подій
+        sendButton.setOnAction(e -> sendMessage());
+        messageField.setOnAction(e -> sendMessage());
 
-            new Thread(this::receiveMessages).start();
-
-            sendButton.setOnAction(e -> sendMessage());
-            messageField.setOnAction(e -> sendMessage());
-
-        } catch (IOException e) {
-            e.printStackTrace();
-            showError("Could not connect to Server.java");
-        }
-
+        // Створюємо та налаштовуємо сцену
         Scene scene = new Scene(root, 400, 600);
         primaryStage.setScene(scene);
+        primaryStage.setMinWidth(300); // Мінімальна ширина вікна
+        primaryStage.setMinHeight(400); // Мінімальна висота вікна
         primaryStage.show();
     }
 
-    private void showLoginDialog() {
+    private void connectToServer() throws IOException {
+        socket = new Socket(SERVER_ADDRESS, SERVER_PORT);
+        reader = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+        writer = new PrintWriter(socket.getOutputStream(), true);
+    }
+
+    private void authenticateUser() {
+        while (!isAuthenticated) {
+            Optional<Pair<String, String>> credentials = showLoginDialog();
+
+            if (!credentials.isPresent()) {
+                Platform.exit();
+                return;
+            }
+
+            try {
+                String response = processAuthentication(credentials.get());
+                if (response.contains("successful")) {
+                    isAuthenticated = true;
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+                        alert.setTitle("Success");
+                        alert.setContentText(response);
+                        alert.showAndWait();
+                    });
+                    // Запускаємо отримання повідомлень тільки після успішної аутентифікації
+                    new Thread(this::receiveMessages).start();
+                } else {
+                    Platform.runLater(() -> {
+                        Alert alert = new Alert(Alert.AlertType.ERROR);
+                        alert.setTitle("Error");
+                        alert.setContentText(response);
+                        alert.showAndWait();
+                    });
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+                showError("Error during authentication");
+                Platform.exit();
+                return;
+            }
+        }
+    }
+
+    private String processAuthentication(Pair<String, String> credentials) throws IOException {
+        String[] parts = credentials.getKey().split(":");
+        String action = parts[0];
+        String username = parts[1];
+
+        writer.println(action);
+        writer.println(username);
+        writer.println(credentials.getValue());
+
+        return reader.readLine();
+    }
+
+    private Optional<Pair<String, String>> showLoginDialog() {
         Dialog<Pair<String, String>> dialog = new Dialog<>();
-        dialog.setTitle("Login");
+        dialog.setTitle("Login / Register");
 
         ButtonType loginButtonType = new ButtonType("Login", ButtonBar.ButtonData.OK_DONE);
-        dialog.getDialogPane().getButtonTypes().addAll(loginButtonType, ButtonType.CANCEL);
+        ButtonType registerButtonType = new ButtonType("Register", ButtonBar.ButtonData.OTHER);
+        dialog.getDialogPane().getButtonTypes().addAll(loginButtonType, registerButtonType, ButtonType.CANCEL);
 
         GridPane grid = new GridPane();
         grid.setHgap(10);
@@ -89,17 +171,14 @@ public class Client extends Application {
 
         dialog.setResultConverter(dialogButton -> {
             if (dialogButton == loginButtonType) {
-                return new Pair<>(username.getText(), password.getText());
+                return new Pair<>("LOGIN:" + username.getText(), password.getText());
+            } else if (dialogButton == registerButtonType) {
+                return new Pair<>("REGISTER:" + username.getText(), password.getText());
             }
             return null;
         });
 
-        Optional<Pair<String, String>> result = dialog.showAndWait();
-
-        result.ifPresent(credentials -> {
-            writer.println(credentials.getKey());
-            writer.println(credentials.getValue());
-        });
+        return dialog.showAndWait();
     }
 
     private void receiveMessages() {
@@ -111,13 +190,13 @@ public class Client extends Application {
             }
         } catch (IOException e) {
             e.printStackTrace();
-            Platform.runLater(() -> showError("Lost connection to Server.java"));
+            Platform.runLater(() -> showError("Lost connection to server"));
         }
     }
 
     private void sendMessage() {
         String message = messageField.getText();
-        if (!message.isEmpty()) {
+        if (!message.isEmpty() && isAuthenticated) {
             writer.println(message);
             messageField.clear();
         }
